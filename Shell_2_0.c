@@ -82,7 +82,6 @@ int main (int argc, char **argv)
 		exit(1);
 	}
 	off_signals();
-	pid_t *bg_pids = NULL;
 	process *process = NULL;
 	int32_t read_return, rbi, rbi_max, pbi, bi, S, hsi, hsi_updown;
 	int32_t copa_last_comp_value;
@@ -606,8 +605,6 @@ brohisy:							reset_history((const char*)full_hist_file_path, (const char*)full
 	}
 	free_copa(first);
 	free_process(process);
-	free(bg_pids);
-	bg_pids = NULL;
 	write(1, "\n", 1);
 	tcsetattr(0, TCSADRAIN, &termios_old_p); 	/* Restore old line desciple settings */
 	return 0;
