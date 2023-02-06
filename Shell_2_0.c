@@ -1,12 +1,5 @@
-#include <stdint.h>
-#include "modules/headers/Shell_2_0.h"
-#include "modules/headers/mk_full_hist_file_path.h"
-#include "modules/headers/input_formatting.h"
-#include "modules/headers/process_control.h"
-#include "modules/headers/help_functions.h"
-#include "modules/headers/history_control.h"
+#include <inttypes.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -15,11 +8,20 @@
 #include <string.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <stdlib.h>
+#include <signal.h>
+#include "modules/headers/Shell_2_0.h"
+#include "modules/headers/mk_full_hist_file_path.h"
+#include "modules/headers/input_formatting.h"
+#include "modules/headers/process_control.h"
+#include "modules/headers/help_functions.h"
+#include "modules/headers/history_control.h"
 
 #define REMOVE_HIST	5 		/* NUMBER THAT FOR REMOVE SUPERFLOUS OLD COMMANDS FROM HISTORY	*/
-#define HIST_NEED	10		/* NUMBER THAT FOR REMAINING COMMANDS FOR NEW HISTORY FILE 	*/
+#define HIST_NEED	50		/* NUMBER THAT FOR REMAINING COMMANDS FOR NEW HISTORY FILE 	*/
 
 typedef struct command_parts copa;
+typedef struct process process;
 
 enum {
 	bufs_size = 1024,
@@ -30,11 +32,11 @@ enum {
 	h_f_size = 8,
 	t_h_f_size = 14,
 	l_d_size = 10,
-	h_s_size = 15,			/* HISTORY STACK SIZE => HISTORY SIZE ALL IN ALL 		*/
+	h_s_size = 55,			/* HISTORY STACK SIZE => HISTORY SIZE ALL IN ALL 		*/
 };
 
 static const char input_error[] = "Incorrect input of control symbols\n";
-static const char w8[w8_size] = ">"; 				/* w8 = wait.  Invation for some comand */
+static const char w8[w8_size] = ">"; 				/* w8 = wait.  Invation for some command */
 static const char hist_file[h_f_size] = "history";		/* CAN CHANGE FILE NAME IF YOU WISH 	*/
 static const char temp_hist_file[t_h_f_size] = ".temp_history";	/* CAN CHANGE FILE NAME IF YOU WISH 	*/
 static const char local_dir[l_d_size] = "Shell_2_0";		/* CAN CHANGE DIR NAME IF YOU WISH 	*/
@@ -66,14 +68,12 @@ int main (int argc, char **argv)
 	if (isatty(0)) {
 /*
  * off canon, off echo and off Ctrl+C/Ctrl+D/Ctrl+-
- * Background processes cant use terminal for output
  * VMIN minimum characters for read and VTIME for a wait of this
  * Set new line desciple settings that we need
  */
 		tcgetattr(0, &termios_old_p);
 		memcpy(&termios_new_p, &termios_old_p, sizeof(termios_new_p));
-		termios_new_p.c_lflag &= ~(ICANON | ECHO | ISIG);
-		termios_new_p.c_lflag |= TOSTOP;
+		termios_new_p.c_lflag &= ~(ICANON | ECHO);
 		termios_new_p.c_cc[VMIN] = 1;
 		termios_new_p.c_cc[VTIME] = 0;
 		tcsetattr(0, TCSANOW, &termios_new_p);
@@ -81,6 +81,9 @@ int main (int argc, char **argv)
 		perror("Can't set termios new attributes");
 		exit(1);
 	}
+	off_signals();
+	pid_t *bg_pids = NULL;
+	process *process = NULL;
 	int32_t read_return, rbi, rbi_max, pbi, bi, S, hsi, hsi_updown;
 	int32_t copa_last_comp_value;
 	int32_t shield_trigger, quote_trigger, input_error_trigger, bracket_trigger, correct_old_history, updown_trigger;
@@ -147,6 +150,7 @@ int main (int argc, char **argv)
 				close(fd_hist);
 		}
 	}
+	write_current_dir_name();
 	write(1, w8, w8_size);
 /*
  * 0x8  = '\b'	(Backspace)
@@ -158,9 +162,10 @@ int main (int argc, char **argv)
  * 0x22 = '"'	(Symbol for using spaces and tabs
  * 		 in part and other syms)
  * 0x17 = '^W'	(Delete last word)
- * 0x26 = '&'	(For background process)
  * 0x28 0x29 =	'(' ')
+ * 0x26 = '&'	(For background process)
  * 0x3b = ';'	(For traing of process)
+ * 0x7c = '|'	(Conveyor symbol)
  * 0x3c = '<'	(Redirect input)
  * 0x3e = '>'	(Redirect output)
  * 0x44 = 'D' 	(for <-)
@@ -168,11 +173,9 @@ int main (int argc, char **argv)
  * 0x41 = 'A' 	(for ^)
  * 0x42 = 'B' 	(for v)
  * 0x5c = '\'	(Shielding)
- * 0x7c = '|'	(Conveyor symbol)
  * 0x7f = DEL	(Delete character under cursor)
  */
 	goto go;
-
 ccmd:	for (pbi = rbi ^= rbi; rbi < bufs_size; rbi++) {
 		switch (read_buf[rbi]) {
 			case 0:
@@ -188,12 +191,19 @@ ccmd:	for (pbi = rbi ^= rbi; rbi < bufs_size; rbi++) {
 					bracket_trigger = input_error_trigger = quote_trigger ^= quote_trigger;
 					goto break_execute;
 				}
-#if 1 
+#if 0 
 // This is for debugging, I see the parts of the future cmdline from struct command_parts. Set 0 instead 1 near #if for turn it off.
 				write_copa(first);
 				write(1, "\n", 1);
 #endif
-break_execute:			write(1, w8, sizeof(w8));
+				if (first) {
+					char **cmdline = copa_to_cmdline((const copa*)first);
+					process = execute_cmdline(cmdline, (const struct termios*)&termios_old_p, process);
+					tcsetattr(0, TCSADRAIN, &termios_new_p);
+					free(cmdline);
+				}
+				write_current_dir_name();
+break_execute:			write(1, w8, w8_size);
 				free_copa(first);
 				first = last = NULL;
 				shield_trigger ^= shield_trigger;
@@ -595,6 +605,9 @@ brohisy:							reset_history((const char*)full_hist_file_path, (const char*)full
 		}
 	}
 	free_copa(first);
+	free_process(process);
+	free(bg_pids);
+	bg_pids = NULL;
 	write(1, "\n", 1);
 	tcsetattr(0, TCSADRAIN, &termios_old_p); 	/* Restore old line desciple settings */
 	return 0;
