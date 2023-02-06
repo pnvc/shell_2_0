@@ -22,7 +22,7 @@ For launch this program u need 5 steps if you want try it with Linux:
 
 	Or you can just run build script file (build). If he is not executable,
 		try use command:	chmod +x build
-		then run it:		./build execute_file
+		then run it:		./build
 	It will execute Makefile.
 
 	flag -Wall for errors
