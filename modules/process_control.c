@@ -123,9 +123,19 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 	pid_t main_pgid = getpgid(getpid());
 	size_t i, start_i;
 	int32_t old_pipe_fd0 = 0;
+	int8_t and_result = -1, or_result = -1;
 	tcsetattr(0, TCSADRAIN, o);
 	for (start_i = i = 0; cmdline[i]; i++) {
 		if (cmdline[i] == background_part) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			sigset_t mask_usr1, mask_empty;
 			sigemptyset(&mask_usr1);
 			sigemptyset(&mask_empty);
@@ -207,6 +217,17 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 			}
 			start_i = i + 1;
 		} else if (!strcmp((const char*)cmdline[i], "cd\0")) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				i++;
+				while ((cmdline[i] < conveyor_part || cmdline[i] > and_part) && cmdline[i] != bracket_left_part && cmdline[i] != bracket_right_part) i++;
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			if (old_pipe_fd0) {
 				close(old_pipe_fd0);
 				old_pipe_fd0 = 0;
@@ -223,6 +244,17 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 			} else
 				break;
 		} else if (!strcmp((const char*)cmdline[i], "jobs\0")) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				i++;
+				while ((cmdline[i] < conveyor_part || cmdline[i] > and_part) && cmdline[i] != bracket_left_part && cmdline[i] != bracket_right_part) i++;
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			if (old_pipe_fd0) {
 				close(old_pipe_fd0);
 				old_pipe_fd0 = 0;
@@ -258,6 +290,17 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 			} else
 				break;
 		} else if (!strcmp((const char*)cmdline[i], "fg\0")) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				i++;
+				while ((cmdline[i] < conveyor_part || cmdline[i] > and_part) && cmdline[i] != bracket_left_part && cmdline[i] != bracket_right_part) i++;
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			if (old_pipe_fd0) {
 				close(old_pipe_fd0);
 				old_pipe_fd0 = 0;
@@ -289,6 +332,15 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 			} else
 				break;
 		} else if (cmdline[i] == train_part) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			cmdline[i] = NULL;
 			pid  = fork();
 			if (!pid) {
@@ -318,6 +370,15 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 			waitpid(pid, NULL, 0);
 			tcsetpgrp(0, main_pgid);
 		} else if (cmdline[i] == conveyor_part) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			child_ready = 0;
 			cmdline[i] = NULL;
 			int32_t pipe_fd[2];
@@ -355,14 +416,101 @@ process *execute_cmdline (char **cmdline, const struct termios *o, process *p)
 			waitpid(pid, NULL, 0);
 			tcsetpgrp(0, main_pgid);
 		} else if (cmdline[i] == and_part) {
-			; // HERE
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
+			pid = fork();
+			cmdline[i] = NULL;
+			if (!pid) {
+				pid_t self_pid = getpid();
+				setpgid(self_pid, self_pid);
+				tcsetpgrp(0, self_pid);
+				on_signals();
+				if (old_pipe_fd0) {
+					dup2(old_pipe_fd0, 0);
+					close(old_pipe_fd0);
+				}
+				if (set_redirects((const char**)cmdline + start_i) == -1) {
+					perror("Set redirects");
+					fflush(stderr);
+					_exit(1);
+				}
+				execvp((const char*)cmdline[start_i], (char * const*)cmdline + start_i);
+				perror("Execvp");
+				fflush(stderr);
+				_exit(1);
+			}
+			if (old_pipe_fd0) {
+				close(old_pipe_fd0);
+				old_pipe_fd0 = 0;
+			}
+			start_i = i + 1;
+			int32_t wstatus;
+			waitpid(pid, &wstatus, 0);
+			if ((WIFEXITED(wstatus) && WEXITSTATUS(wstatus) > 0) || WIFSIGNALED(wstatus))
+				and_result = 1;
+			tcsetpgrp(0, main_pgid);
 		} else if (cmdline[i] == or_part) {
-			; // HERE
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
+			pid = fork();
+			cmdline[i] = NULL;
+			if (!pid) {
+				pid_t self_pid = getpid();
+				setpgid(self_pid, self_pid);
+				tcsetpgrp(0, self_pid);
+				on_signals();
+				if (old_pipe_fd0) {
+					dup2(old_pipe_fd0, 0);
+					close(old_pipe_fd0);
+				}
+				if (set_redirects((const char**)cmdline + start_i) == -1) {
+					perror("Set redirects");
+					fflush(stderr);
+					_exit(1);
+				}
+				execvp((const char*)cmdline[start_i], (char * const*)cmdline + start_i);
+				perror("Execvp");
+				fflush(stderr);
+				_exit(1);
+			}
+			if (old_pipe_fd0) {
+				close(old_pipe_fd0);
+				old_pipe_fd0 = 0;
+			}
+			start_i = i + 1;
+			int32_t wstatus;
+			waitpid(pid, &wstatus, 0);
+			if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == 0)
+				or_result = 1;
+			tcsetpgrp(0, main_pgid);
 		} else if (cmdline[i] == bracket_left_part) {
 			; // HERE
 		} else if (cmdline[i] == bracket_right_part) {
 			; // HERE
 		} else if (cmdline[i + 1] == NULL) {
+			if (or_result > 0 || and_result > 0) {
+				if (old_pipe_fd0) {
+					close(old_pipe_fd0);
+					old_pipe_fd0 = 0;
+				}
+				start_i = i + 1;
+				or_result = and_result = -1;
+				continue;
+			}
 			pid = fork();
 			if (!pid) {
 				pid_t self_pid = getpid();

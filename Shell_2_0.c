@@ -201,8 +201,8 @@ ccmd:	for (pbi = rbi ^= rbi; rbi < bufs_size; rbi++) {
 					tcsetattr(0, TCSADRAIN, &termios_new_p);
 					free(cmdline);
 				}
-				write_current_dir_name();
-break_execute:			write(1, w8, w8_size);
+break_execute:			write_current_dir_name();
+				write(1, w8, w8_size);
 				free_copa(first);
 				first = last = NULL;
 				shield_trigger ^= shield_trigger;
